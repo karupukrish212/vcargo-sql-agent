@@ -1,0 +1,22 @@
+# Business (transaction) tables the assistant may learn and query.
+# One table name per line. Anything after # is ignored.
+# Every other table in the database is treated as technical and is never trained on or queried.
+
+companyaddress
+companybankdetails
+companyprofile
+customer
+customeraddress
+fuel
+maintenance
+maintenanceparts
+tdriver
+tdriverdocuments
+trip
+tripinvoice
+tripinvoiceitem
+tripwaypoints
+tvehicle
+tvehicledocuments
+tyremaster
+users

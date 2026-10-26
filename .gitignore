@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+vector_store/
+readonly_user.sql
+feedback/
+vanna_local_vectors/

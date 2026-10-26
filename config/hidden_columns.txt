@@ -1,0 +1,13 @@
+# Columns the assistant must never learn about or return: table.column, one per line.
+# They are removed from the trained schema, queries that mention them are rejected,
+# and SELECT * is rejected on these tables (columns must be listed explicitly).
+
+users.password
+tdriver.aadharnumber
+companybankdetails.accountnumber
+customer.pannumber
+companyprofile.panno
+
+# Binary images: useless in a result table and very large
+companyprofile.companylogo
+customer.image
