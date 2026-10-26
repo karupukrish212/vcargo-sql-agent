@@ -75,6 +75,7 @@ Cargo details are on the trip row itself: goodstype, goodsweight, goodsvalue. Do
 # Invoices, billing and outstanding payments
 tripinvoice is the bill sent to a customer. totalamount = subtotal - discount + taxamount (taxrate is a percent, GST).
 GST / tax billed = SUM(tripinvoice.taxamount) over all non-cancelled invoices, whatever their status.
+GST is only the taxamount column, never totalamount or subtotal + tax.
 Only filter on status when the question asks about paid, draft, etc. invoices.
 amountpaid = amount received so far; balancedue = amount still to be collected.
 Outstanding / receivables / pending payment = SUM(tripinvoice.balancedue) where balancedue > 0 and cancel = 0.
@@ -89,6 +90,7 @@ For billed revenue use tripinvoice; for operational revenue use trip.revenue.
 # Fuel
 One row per fuel fill-up. fuel.quantity = litres, fuel.cost = total amount paid for that fill-up (not price per litre).
 Price per litre = cost / quantity. Total fuel spend = SUM(fuel.cost).
+Average price per litre over several fill-ups = SUM(cost) / SUM(quantity) (weighted by litres), never AVG(cost / quantity).
 odometerreading - previousodometer = km driven since the previous fill-up; mileage (km per litre) = (odometerreading - previousodometer) / quantity.
 fueltype values (lower case): 'diesel', 'petrol'.
 

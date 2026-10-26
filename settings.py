@@ -30,6 +30,20 @@ MYSQL_PASSWORD = _required("MYSQL_PASSWORD")
 QUERY_TIMEOUT_SECONDS = int(os.getenv("QUERY_TIMEOUT_SECONDS", "30"))
 MAX_RESULT_ROWS = int(os.getenv("MAX_RESULT_ROWS", "5000"))
 
+# Which LLM writes the SQL: "ollama" (local, nothing leaves the machine) or "groq" (cloud API)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+if LLM_PROVIDER not in ("ollama", "groq"):
+    raise RuntimeError(f"LLM_PROVIDER must be 'ollama' or 'groq', not '{LLM_PROVIDER}'")
+
+# Groq (OpenAI-compatible API). Schema, business rules, examples and questions are sent to
+# Groq; query results are not (unless ALLOW_LLM_TO_SEE_DATA is true).
+GROQ_API_KEY = _required("GROQ_API_KEY") if LLM_PROVIDER == "groq" else os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+# For reasoning models (gpt-oss): low / medium / high. Leave empty for models that don't reason.
+GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low").strip().lower()
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+
 # Local LLM (Ollama)
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")

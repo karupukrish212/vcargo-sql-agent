@@ -93,6 +93,42 @@ The schema alone is rarely enough on a real database. In order of impact:
 
 In the UI, when an answer is right, click to save it. It becomes a new example.
 
+## Choosing the LLM per client: Groq (cloud) or Ollama (offline)
+
+Each installation picks one in its `.env`. The code, API and training data are the same;
+only the model that writes the SQL changes.
+
+| | `LLM_PROVIDER=groq` | `LLM_PROVIDER=ollama` |
+|---|---|---|
+| For clients who | accept a cloud API | require everything to stay on their network |
+| Sent outside | schema, business rules, examples, questions (not query results) | nothing |
+| Needs | `GROQ_API_KEY` (and `GROQ_MODEL`) | Ollama running with `OLLAMA_MODEL` pulled |
+| Speed / accuracy | larger model, faster | depends on the client's hardware |
+
+With `ollama`, the Groq client is never loaded, even if a `GROQ_API_KEY` is present.
+The startup log and `GET /api/health` show which one is active.
+
+**Groq client** `.env`:
+```
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=openai/gpt-oss-120b
+```
+
+**Offline client** `.env`:
+```
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen2.5:7b
+```
+
+An offline machine can't download anything, so copy these from a machine with internet:
+1. **Ollama model**: run `ollama pull qwen2.5:7b` online, then copy `%USERPROFILE%\.ollama\models`
+   to the same place on the client.
+2. **ChromaDB search model** (downloaded on first use): copy
+   `%USERPROFILE%\.cache\chroma\onnx_models\all-MiniLM-L6-v2` to the same place on the client.
+3. **Python packages**: `pip download -r requirements.txt -d wheels` online, then
+   `pip install --no-index --find-links wheels -r requirements.txt` on the client.
+
 ## Before exposing it to other people
 
 - The UI has **no login**. Keep `APP_HOST=127.0.0.1`, or put it behind a reverse proxy

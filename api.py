@@ -95,9 +95,23 @@ def to_json_ready(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def generate_sql(prompt: str) -> str:
+    """Ask the LLM for SQL; turn provider outages and rate limits into clear HTTP errors."""
+    try:
+        return vn.generate_sql(prompt, allow_llm_to_see_data=settings.ALLOW_LLM_TO_SEE_DATA)
+    except Exception as e:
+        if getattr(e, "status_code", None) == 429:
+            retry_after = getattr(getattr(e, "response", None), "headers", {}).get("retry-after")
+            wait = f" Try again in {retry_after} seconds." if retry_after else " Try again in a minute."
+            raise HTTPException(429, detail={"message": "The AI model's rate limit was reached." + wait, "sql": None},
+                                headers={"Retry-After": retry_after} if retry_after else None)
+        log.exception("LLM call failed")
+        raise HTTPException(503, detail={"message": f"The AI model is unavailable: {e}", "sql": None})
+
+
 def generate_and_run(question: str) -> tuple[str, pd.DataFrame]:
     """Generate SQL, run it, and on failure give the LLM one chance to fix it (like the Vanna UI)."""
-    sql = vn.generate_sql(question, allow_llm_to_see_data=settings.ALLOW_LLM_TO_SEE_DATA)
+    sql = generate_sql(question)
     if not vn.is_sql_valid(sql):
         raise HTTPException(422, detail={"message": sql, "sql": None})
     try:
@@ -109,7 +123,7 @@ def generate_and_run(question: str) -> tuple[str, pd.DataFrame]:
             f"This is the question I was trying to answer: {question}\n\n"
             "Can you rewrite the SQL to fix the error?"
         )
-        fixed_sql = vn.generate_sql(fix_prompt, allow_llm_to_see_data=settings.ALLOW_LLM_TO_SEE_DATA)
+        fixed_sql = generate_sql(fix_prompt)
         try:
             return fixed_sql, vn.run_sql(fixed_sql)
         except UnsafeSQLError as e:
@@ -313,11 +327,11 @@ def health():
     except Exception as e:
         status["database"] = f"error: {e}"
     try:
-        vn.ollama_client.show(vn.model)
-        status["llm"] = "ok"
+        vn.llm_health()
+        status["llm"] = f"ok ({settings.LLM_PROVIDER}: {vn.config['model']})"
     except Exception as e:
         status["llm"] = f"error: {e}"
-    if any(v != "ok" for v in status.values()):
+    if any(not v.startswith("ok") for v in status.values()):
         raise HTTPException(503, detail=status)
     return status
 
