@@ -5,13 +5,14 @@
 Flow for the frontend:
     POST /api/ask                        question -> SQL, rows, chart, result id
     GET  /api/results/{id}/csv           download the result as CSV
-    POST /api/results/{id}/feedback      {"correct": true}  -> saved as a training example
+    POST /api/results/{id}/feedback      {"correct": true}  -> trained and saved in training/examples.sql
                                          {"correct": false} -> logged for review
     Wrong answer? Get a corrected result (new id), then send {"correct": true} for it:
     POST /api/results/{id}/run-sql       {"sql": "..."}     -> run SQL the user edited
     POST /api/results/{id}/fix           {"comment": "..."} -> model rewrites the SQL
 
 Results are cached in memory for RESULT_CACHE_MINUTES, so run a single worker.
+New examples added to training/examples.sql are trained automatically before the next question.
 """
 import json
 import logging
@@ -20,7 +21,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -33,7 +34,8 @@ from pydantic import BaseModel, Field
 
 import settings
 from charts import build_chart
-from safe_sql import UnsafeSQLError
+from safe_sql import UnsafeSQLError, explain
+from train import load_examples, question_key, remove_example, write_example
 from vanna_client import build_vanna
 
 log = logging.getLogger("api")
@@ -75,6 +77,75 @@ class ResultCache:
 cache = ResultCache(settings.RESULT_CACHE_MINUTES * 60)
 
 
+# ---------- new examples in training/examples.sql ----------
+
+_examples_lock = threading.Lock()
+_examples_synced_mtime: float | None = None
+
+
+def sync_examples():
+    """Train question/SQL pairs added to training/examples.sql, without running train.py.
+
+    Only does work when the file has changed. Examples whose question is already trained are
+    left as they are, like train.py does."""
+    global _examples_synced_mtime
+    try:
+        mtime = settings.EXAMPLES_FILE.stat().st_mtime
+    except FileNotFoundError:
+        return
+    with _examples_lock:
+        if mtime == _examples_synced_mtime:
+            return
+        try:
+            if _train_new_examples():
+                _examples_synced_mtime = mtime
+        except Exception:
+            # Never block a question because of this; it is tried again before the next one
+            log.exception("Could not train new examples from %s", settings.EXAMPLES_FILE.name)
+
+
+def _train_new_examples() -> bool:
+    """Add the pairs whose question isn't trained yet. False if any failed the EXPLAIN check,
+    so they are tried again (fixed in the file, or the database was down)."""
+    trained = {question_key(q) for q, _ in _trained_examples()}
+    tables, hidden = set(settings.load_business_tables()), settings.load_hidden_columns()
+    all_ok = True
+    for question, sql in load_examples():
+        if question_key(question) in trained:
+            continue
+        try:
+            explain(sql, tables, hidden)
+        except Exception as e:
+            log.warning("examples.sql: not trained '%s': %s", question, e)
+            all_ok = False
+            continue
+        vn.add_question_sql(question=question, sql=sql)
+        trained.add(question_key(question))
+        log.info("examples.sql: trained '%s'", question)
+    return all_ok
+
+
+def _trained_examples() -> list[tuple[str, str]]:
+    """(question, training id) of every trained question/SQL pair."""
+    df = vn.get_training_data()
+    if df.empty:
+        return []
+    return [(r.question, r.id) for r in df[df["training_data_type"] == "sql"].itertuples()]
+
+
+def save_confirmed_example(question: str, sql: str) -> str:
+    """Train a pair the user confirmed with 'Yes' and keep it in training/examples.sql, so it
+    survives a new installation. An earlier SQL for the same question is replaced in both."""
+    question = " ".join(question.split())
+    with _examples_lock:
+        for q, training_id in _trained_examples():
+            if question_key(q) == question_key(question):
+                vn.remove_training_data(training_id)
+        training_id = vn.add_question_sql(question=question, sql=sql)
+        write_example(question, sql, note=f"Added from the app on {date.today().isoformat()}")
+    return training_id
+
+
 # ---------- helpers ----------
 
 def to_json_ready(df: pd.DataFrame) -> pd.DataFrame:
@@ -97,6 +168,7 @@ def to_json_ready(df: pd.DataFrame) -> pd.DataFrame:
 
 def generate_sql(prompt: str) -> str:
     """Ask the LLM for SQL; turn provider outages and rate limits into clear HTTP errors."""
+    sync_examples()
     try:
         return vn.generate_sql(prompt, allow_llm_to_see_data=settings.ALLOW_LLM_TO_SEE_DATA)
     except Exception as e:
@@ -186,7 +258,7 @@ class TrainingItem(BaseModel):
 
 # ---------- app ----------
 
-app = FastAPI(title="Fleet data assistant API", version="1.0.0", dependencies=[Depends(require_api_key)])
+app = FastAPI(title="Vcargo SQL Agent API", version="1.0.0", dependencies=[Depends(require_api_key)])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -276,12 +348,13 @@ def download_csv(result_id: str):
 
 @app.post("/api/results/{result_id}/feedback", response_model=FeedbackResponse, tags=["ask"])
 def feedback(result_id: str, req: FeedbackRequest):
-    """'Were the results correct?' Yes trains the question/SQL pair; No logs it for review.
+    """'Were the results correct?' Yes trains the question/SQL pair and saves it in
+    training/examples.sql, replacing an earlier SQL for the same question; No logs it for review.
 
     For a result from /run-sql or /fix, Yes trains the original question with the corrected SQL."""
     item = cache.get(result_id)
     if req.correct:
-        training_id = vn.add_question_sql(question=item["question"], sql=item["sql"])
+        training_id = save_confirmed_example(item["question"], item["sql"])
         log.info("Trained from feedback: %s", item["question"])
         return FeedbackResponse(status="trained", training_id=training_id)
 
@@ -299,6 +372,7 @@ def feedback(result_id: str, req: FeedbackRequest):
 @app.get("/api/training-data", response_model=list[TrainingItem], tags=["training"])
 def list_training_data(type: Literal["sql", "ddl", "documentation"] | None = None):
     """What the assistant has learned. Filter with ?type=sql to review saved examples."""
+    sync_examples()
     df = vn.get_training_data()
     if type:
         df = df[df["training_data_type"] == type]
@@ -311,15 +385,20 @@ def list_training_data(type: Literal["sql", "ddl", "documentation"] | None = Non
 
 @app.delete("/api/training-data/{training_id}", tags=["training"])
 def delete_training_data(training_id: str):
-    """Remove a wrong example (e.g. one saved by mistake with 'Yes')."""
-    if not vn.remove_training_data(training_id):
-        raise HTTPException(404, "Training item not found")
+    """Remove a wrong example (e.g. one saved by mistake with 'Yes'), also from training/examples.sql
+    so it doesn't come back."""
+    with _examples_lock:
+        question = next((q for q, i in _trained_examples() if i == training_id), None)
+        if not vn.remove_training_data(training_id):
+            raise HTTPException(404, "Training item not found")
+        if question:
+            remove_example(question)
     return {"deleted": training_id}
 
 
 @app.get("/api/health", tags=["system"])
 def health():
-    """Checks the database and the local LLM."""
+    """Checks the database and the LLM (Groq)."""
     status = {}
     try:
         vn.run_sql("SELECT 1 AS ok")
@@ -328,7 +407,7 @@ def health():
         status["database"] = f"error: {e}"
     try:
         vn.llm_health()
-        status["llm"] = f"ok ({settings.LLM_PROVIDER}: {vn.config['model']})"
+        status["llm"] = f"ok (groq: {vn.config['model']})"
     except Exception as e:
         status["llm"] = f"error: {e}"
     if any(not v.startswith("ok") for v in status.values()):

@@ -1,0 +1,19 @@
+<service>
+  <id>VCargoSQLAgent</id>
+  <name>VCargo SQL Agent API</name>
+  <description>VCargo Agentic AI SQL Agent FastAPI Service</description>
+
+  <executable>C:\vcargo-sql-agent\.venv\Scripts\python.exe</executable>
+
+  <arguments>-m uvicorn api:app --host 0.0.0.0 --port 8001</arguments>
+
+  <workingdirectory>C:\vcargo-sql-agent</workingdirectory>
+
+  <startmode>Automatic</startmode>
+
+  <onfailure action="restart" delay="10 sec"/>
+
+  <logpath>C:\vcargo-sql-agent\logs</logpath>
+
+  <log mode="append"/>
+</service>

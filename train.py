@@ -69,22 +69,76 @@ def load_documentation() -> list[str]:
     return [c.strip() for c in chunks if re.sub(r"^#.*$", "", c, flags=re.MULTILINE).strip()]
 
 
+_QUESTION_LINE = re.compile(r"^\s*--\s*Q:\s*(.+)$")
+
+
 def load_examples() -> list[tuple[str, str]]:
-    """Pairs from training/examples.sql: a '-- Q: question' line followed by its SQL."""
+    """Pairs from training/examples.sql: a '-- Q: question' line followed by its SQL.
+    Other comment lines (like '-- Added from the app on ...') are not part of the SQL."""
     if not settings.EXAMPLES_FILE.exists():
         return []
     examples, question, sql_lines = [], None, []
     for line in settings.EXAMPLES_FILE.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"^\s*--\s*Q:\s*(.+)$", line)
+        m = _QUESTION_LINE.match(line)
         if m:
             if question and "".join(sql_lines).strip():
                 examples.append((question, "\n".join(sql_lines).strip()))
             question, sql_lines = m.group(1).strip(), []
-        elif question:
+        elif question and not line.lstrip().startswith("--"):
             sql_lines.append(line)
     if question and "".join(sql_lines).strip():
         examples.append((question, "\n".join(sql_lines).strip()))
     return examples
+
+
+def question_key(question: str) -> str:
+    """For comparing questions: case and extra spaces don't make a different question."""
+    return " ".join(question.split()).lower()
+
+
+def write_example(question: str, sql: str, note: str | None = None) -> None:
+    """Put a pair in training/examples.sql, replacing the example with the same question if there is one."""
+    sql = "\n".join(sql.strip().rstrip(";").rstrip().splitlines()) + ";"
+    block = [f"-- Q: {' '.join(question.split())}"] + ([f"-- {note}"] if note else []) + [sql]
+    _rewrite_examples(question, block)
+
+
+def remove_example(question: str) -> bool:
+    """Remove the examples with this question from training/examples.sql."""
+    return _rewrite_examples(question, None)
+
+
+def _rewrite_examples(question: str, block: list[str] | None) -> bool:
+    """Replace the examples with this question by block (append it if there are none), or
+    remove them when block is None. Other examples, comments and line endings are kept."""
+    path = settings.EXAMPLES_FILE
+    text = path.read_bytes().decode("utf-8") if path.exists() else ""
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.replace("\r\n", "\n").split("\n")
+    starts = [i for i, line in enumerate(lines) if _QUESTION_LINE.match(line)]
+    matches = [i for i in starts if question_key(_QUESTION_LINE.match(lines[i]).group(1)) == question_key(question)]
+    if not matches and block is None:
+        return False
+
+    out, pos = [], 0
+    for n, start in enumerate(matches):
+        end = next((i for i in starts if i > start), len(lines))
+        out += lines[pos:start]
+        if n == 0 and block:
+            out += block
+            # Keep the blank lines before the next example
+            while end > start and not lines[end - 1].strip():
+                end -= 1
+        pos = end
+    out += lines[pos:]
+    if not matches:
+        while out and not out[-1].strip():
+            out.pop()
+        out += ([""] if out else []) + block + [""]
+
+    with path.open("w", encoding="utf-8", newline=newline) as f:
+        f.write("\n".join(out))
+    return True
 
 
 def main():

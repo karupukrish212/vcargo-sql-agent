@@ -1,0 +1,18 @@
+2026-10-27 15:58:39,776 DEBUG - Starting WinSW in console mode
+2026-10-27 15:58:39,834 INFO  - Starting service 'VCargo SQL Agent API (VCargoSQLAgent)'...
+2026-10-27 15:58:40,504 DEBUG - Starting WinSW in service mode
+2026-10-27 15:58:40,551 INFO  - Service 'VCargo SQL Agent API (VCargoSQLAgent)' started successfully.
+2026-10-27 15:58:40,724 INFO  - Starting C:\vcargo-sql-agent\.venv\Scripts\python.exe -m uvicorn api:app --host 0.0.0.0 --port 8001
+2026-10-27 15:58:40,768 INFO  - Started process 13644
+2026-10-27 15:58:40,784 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.DefaultLogAppender
+2026-10-27 15:58:45,501 DEBUG - Starting WinSW in console mode
+2026-10-27 16:00:32,694 INFO  - Stopping VCargoSQLAgent
+2026-10-27 16:00:32,695 DEBUG - ProcessKill 13644
+2026-10-27 16:00:32,700 DEBUG - Stopping process 13644...
+2026-10-27 16:00:33,547 DEBUG - Process 13644 canceled with code 0.
+2026-10-27 16:00:33,561 INFO  - Finished VCargoSQLAgent
+2026-10-27 16:00:34,643 DEBUG - Starting WinSW in service mode
+2026-10-27 16:00:34,851 INFO  - Starting C:\vcargo-sql-agent\.venv\Scripts\python.exe -m uvicorn api:app --host 0.0.0.0 --port 8001
+2026-10-27 16:00:34,889 INFO  - Started process 8132
+2026-10-27 16:00:34,908 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.DefaultLogAppender
+2026-10-27 16:00:40,352 DEBUG - Starting WinSW in console mode

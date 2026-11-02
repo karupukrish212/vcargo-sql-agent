@@ -176,3 +176,18 @@ FROM customer c
 LEFT JOIN customeraddress a ON a.customerid = c.customerid
 WHERE c.cancel = 0
 ORDER BY c.customername;
+
+-- Q: Show the customers who send goods from Natham to Madurai
+SELECT DISTINCT c.customerid, c.customercode, c.customername, c.email, c.phonenumber, c.pocname,
+       c.pocemail, c.pocnumber, c.salesperson, a.city, a.state
+FROM trip t
+JOIN customer c ON c.customerid = t.customer
+LEFT JOIN customeraddress a ON a.customerid = c.customerid
+WHERE t.cancel = 0
+  AND t.source LIKE '%natham%'
+  AND t.destination LIKE '%madurai%';
+
+-- Q: show the customer details who are send the goods from dindigul to bangalore?
+-- Added from the app on 2026-11-02
+SELECT DISTINCT c.customerid, c.customercode, c.customername, c.email, c.phonenumber, c.pocname, c.pocemail, c.pocnumber, c.salesperson, a.city, a.state FROM trip t JOIN customer c ON c.customerid = t.customer LEFT JOIN customeraddress a ON a.customerid = c.customerid WHERE t.cancel = 0 AND lower(t.source) LIKE '%dindigul%' AND (lower(t.destination) LIKE '%bengaluru%' OR lower(t.destination) LIKE '%bangalore%');
+

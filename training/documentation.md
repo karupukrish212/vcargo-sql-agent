@@ -59,7 +59,7 @@ where d is the business date column (trip.startdate, fuel.fueldate, tripinvoice.
 
 ---
 
-# Trip revenue, cost and profit
+# Trips: revenue, cost, profit, routes and places
 Each trip stores its own figures:
 - trip.revenue = amount charged to the customer for the trip
 - trip.fuelcost, trip.tollcharges, trip.otherexpenses = cost components
@@ -68,6 +68,15 @@ Each trip stores its own figures:
 Revenue, cost or profit by customer, vehicle, driver, route or month = SUM of these trip columns, grouped as asked.
 Trip status values: 'COMPLETED'. Trip types (triptype): 'freight', 'passenger'.
 A route is source -> destination. trip.distance is in km.
+Places: trip.source and trip.destination are full addresses, e.g. 'Natham, Tamil Nadu, India' or
+'Silk Board junction, Sector 6, HSR Layout, Bengaluru, Karnataka 560068'.
+Match a place or city (also customeraddress.city) with LIKE '%name%', never with =.
+Some cities have two names and the data contains both. Match both names, inside brackets so the
+OR doesn't escape the other conditions:
+  AND (t.destination LIKE '%bengaluru%' OR t.destination LIKE '%bangalore%')
+Same city: Bengaluru = Bangalore, Chennai = Madras, Mumbai = Bombay, Kolkata = Calcutta,
+Mysuru = Mysore, Thiruvananthapuram = Trivandrum, Puducherry = Pondicherry,
+Tiruchirappalli = Trichy, Thoothukudi = Tuticorin, Kochi = Cochin.
 Cargo details are on the trip row itself: goodstype, goodsweight, goodsvalue. Don't join invoices to answer questions about trips.
 
 ---

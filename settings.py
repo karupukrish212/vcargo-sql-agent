@@ -30,25 +30,27 @@ MYSQL_PASSWORD = _required("MYSQL_PASSWORD")
 QUERY_TIMEOUT_SECONDS = int(os.getenv("QUERY_TIMEOUT_SECONDS", "30"))
 MAX_RESULT_ROWS = int(os.getenv("MAX_RESULT_ROWS", "5000"))
 
-# Which LLM writes the SQL: "ollama" (local, nothing leaves the machine) or "groq" (cloud API)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
-if LLM_PROVIDER not in ("ollama", "groq"):
-    raise RuntimeError(f"LLM_PROVIDER must be 'ollama' or 'groq', not '{LLM_PROVIDER}'")
+# The LLM that writes the SQL is Groq (cloud API). The Ollama (local) option is switched off.
+# LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+# if LLM_PROVIDER not in ("ollama", "groq"):
+#     raise RuntimeError(f"LLM_PROVIDER must be 'ollama' or 'groq', not '{LLM_PROVIDER}'")
 
 # Groq (OpenAI-compatible API). Schema, business rules, examples and questions are sent to
 # Groq; query results are not (unless ALLOW_LLM_TO_SEE_DATA is true).
-GROQ_API_KEY = _required("GROQ_API_KEY") if LLM_PROVIDER == "groq" else os.getenv("GROQ_API_KEY", "")
+GROQ_API_KEY = _required("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 # For reasoning models (gpt-oss): low / medium / high. Leave empty for models that don't reason.
 GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low").strip().lower()
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+# Prompt budget (approx. tokens) for the schema, business rules and examples sent with each question
+LLM_PROMPT_TOKENS = int(os.getenv("LLM_PROMPT_TOKENS", "12288"))
 
-# Local LLM (Ollama)
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
-OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "240"))
+# Local LLM (Ollama) -- switched off, Groq only
+# OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+# OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+# OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+# OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "240"))
 
 # Vector store (Vanna's training memory)
 VECTOR_STORE_PATH = os.getenv("VECTOR_STORE_PATH", str(ROOT / "vector_store"))
@@ -69,7 +71,7 @@ SHOW_TRAINING_DATA = _bool("SHOW_TRAINING_DATA", True)
 
 # REST API for the React frontend
 API_HOST = os.getenv("API_HOST", "127.0.0.1")
-API_PORT = int(os.getenv("API_PORT", "8000"))
+API_PORT = int(os.getenv("API_PORT", "8001"))
 API_KEY = os.getenv("API_KEY", "")  # empty = no key required
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",") if o.strip()]
 RESULT_CACHE_MINUTES = int(os.getenv("RESULT_CACHE_MINUTES", "60"))

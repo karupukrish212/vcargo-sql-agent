@@ -73,9 +73,19 @@ question ──► Vanna ──► finds related table DDL, business rules and e
    Answers marked "No" are logged to `feedback/wrong_answers.jsonl`. Review them
    regularly and fix them with documentation or examples.
 
-Re-run `train.py` whenever you change tables, documentation or examples. It rebuilds
-schema and documentation from scratch. Question/SQL pairs that users mark as correct in
-the UI are kept, unless you pass `--reset-examples`.
+Re-run `train.py` whenever you change tables or documentation, with the API stopped (or restart
+it afterwards). It rebuilds schema and documentation from scratch. Question/SQL pairs are kept,
+unless you pass `--reset-examples` (which then reloads them from `training/examples.sql`).
+
+`training/examples.sql` holds the examples, so they are kept on a new installation:
+- New examples you add to it don't need `train.py`: the API trains them automatically before the
+  next question. Changing the SQL of an example whose question is already trained does need
+  `train.py --reset-examples`.
+- Answers users confirm with "Yes" through the API are added to it automatically, marked
+  `-- Added from the app on <date>`, replacing an earlier SQL for the same question. Commit the
+  file regularly and review these in the git diff. Deleting an example through the API removes
+  it from the file too.
+- Answers confirmed in the chat page (`app.py`) are only kept in the vector store.
 
 ## Getting good accuracy
 

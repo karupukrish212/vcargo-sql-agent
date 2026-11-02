@@ -1,6 +1,6 @@
 # Fleet data assistant: API for the frontend
 
-Base URL: `http://<server>:8000` (local: `http://127.0.0.1:8000`).
+Base URL: `http://<server>:8001` (local: `http://127.0.0.1:8001`).
 Interactive docs with "Try it out": **`/docs`**. OpenAPI schema: `/openapi.json`.
 
 If the server sets `API_KEY`, send it on every request as the header `X-API-Key`.
@@ -82,7 +82,9 @@ Returns `text/csv` with a filename in `Content-Disposition`. It's UTF-8 with BOM
 { "correct": false, "comment": "should only include diesel" }
 ```
 - `correct: true` → `{"status": "trained", "training_id": "..."}`. The question and SQL are saved
-  as an example and used for future questions. Only show "Yes" after the user has seen the result.
+  as an example and used for future questions. They are also added to `training/examples.sql`,
+  so they are kept on a new installation; an earlier SQL for the same question is replaced.
+  Only show "Yes" after the user has seen the result.
 - `correct: false` → `{"status": "logged"}`. Saved to `feedback/wrong_answers.jsonl` for the
   maintainers to fix with documentation or examples.
 
@@ -111,7 +113,7 @@ Takes about 5-15 seconds, like `/api/ask`.
 ## Admin endpoints
 
 - `GET /api/training-data?type=sql`: list saved examples (`type` = `sql`, `ddl` or `documentation`)
-- `DELETE /api/training-data/{id}`: remove a wrong example (e.g. "Yes" clicked by mistake)
+- `DELETE /api/training-data/{id}`: remove a wrong example (e.g. "Yes" clicked by mistake), also from `training/examples.sql`
 - `GET /api/health`: `{"database": "ok", "llm": "ok"}`, or 503 with the failing part
 
 ## React example
@@ -126,7 +128,7 @@ import createPlotlyComponent from "react-plotly.js/factory";
 import Plotly from "plotly.js-dist-min";
 
 const Plot = createPlotlyComponent(Plotly);
-const API = "http://127.0.0.1:8000";
+const API = "http://127.0.0.1:8001";
 const headers = { "Content-Type": "application/json" /*, "X-API-Key": "..." */ };
 
 export default function Ask() {
