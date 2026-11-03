@@ -67,6 +67,8 @@ APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.getenv("APP_PORT", "8084"))
 APP_TITLE = os.getenv("APP_TITLE", "Ask the database")
 ALLOW_LLM_TO_SEE_DATA = _bool("ALLOW_LLM_TO_SEE_DATA", False)
+# Rows the model sees to write the answer (/api/results/{id}/answer), when ALLOW_LLM_TO_SEE_DATA is true
+ANSWER_MAX_ROWS = int(os.getenv("ANSWER_MAX_ROWS", "50"))
 SHOW_TRAINING_DATA = _bool("SHOW_TRAINING_DATA", True)
 
 # REST API for the React frontend

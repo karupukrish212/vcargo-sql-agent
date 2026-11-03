@@ -31,6 +31,14 @@ def _vanna_class():
                 model=settings.GROQ_MODEL, messages=prompt, temperature=0, **extra)
             return response.choices[0].message.content
 
+        def stream_prompt(self, prompt):
+            """Like submit_prompt, but yields the text as it is written. Connection errors and
+            rate limits are raised here, before the first piece."""
+            extra = {"reasoning_effort": settings.GROQ_REASONING_EFFORT} if settings.GROQ_REASONING_EFFORT else {}
+            stream = self.client.chat.completions.create(
+                model=settings.GROQ_MODEL, messages=prompt, temperature=0, stream=True, **extra)
+            return (chunk.choices[0].delta.content or "" for chunk in stream if chunk.choices)
+
         def llm_health(self):
             self.client.models.retrieve(settings.GROQ_MODEL)
 

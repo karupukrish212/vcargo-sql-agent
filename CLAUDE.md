@@ -25,6 +25,9 @@ Run: `.venv\Scripts\python api.py` (Python 3.12.0 venv). Train: `.venv\Scripts\p
 | 6 | Evaluation (eval set, accuracy report) | not started |
 | 7 | Deploy to the office Windows Server without source code | **current phase**: plan given, nothing built yet |
 | 8 | Docs cleanup (README/API.md) | not started |
+| 9 | Chat-style written answer: `POST /api/results/{id}/answer` (`answers.py`), React chat example in API.md | done 2026-11-03, not committed |
+| 10 | Table only on "Show table": `"rows": false` on ask/run-sql/fix + `GET /api/results/{id}/table` | done 2026-11-03, not committed |
+| 11 | `"answer": true` (answer in the /ask response, one call) and `"sql_visible"` on ask/run-sql/fix | done 2026-11-03, not committed; user may ask for changes after trying it |
 
 ## 2. Decisions and why
 - **Model:** Groq `openai/gpt-oss-120b` through the OpenAI-compatible API, `reasoning_effort=low`, `LLM_PROMPT_TOKENS=12288`.
@@ -48,6 +51,22 @@ Run: `.venv\Scripts\python api.py` (Python 3.12.0 venv). Train: `.venv\Scripts\p
   Saving happens on "Yes", not automatically on run-sql, because SQL that runs is not necessarily correct.
   Only the user's confirmation should train. The Flask page's "Yes" trains only the vector store.
 - `ALLOW_LLM_TO_SEE_DATA` defaults to false. Setting it to true sends result rows to Groq.
+  It also lets Vanna run lookup queries while writing SQL.
+- **Written answer** (`answers.py`, `POST /api/results/{id}/answer`): a separate endpoint, so a Groq failure never hides the table.
+  - With `ALLOW_LLM_TO_SEE_DATA=true`, Groq writes the Markdown answer from the first `ANSWER_MAX_ROWS`=50 rows and streams it.
+  - With `false`, or when Groq fails, rate-limits or writes nothing, `template_answer()` builds it from the result and nothing is sent.
+  - The `X-Answer-Source` header (`llm` / `template`) says which one wrote it.
+  - Code formats the values (₹ with Indian grouping, dates such as `02 Nov 2026`) and Groq copies them and must not calculate.
+  - The answer is not trained; only the SQL is trained.
+  - The user first wanted no result data sent to the LLM, then chose this design and set `ALLOW_LLM_TO_SEE_DATA=true` in `.env` on 2026-11-03.
+  - The LLM path was first tested with made-up rows. After the flag was set to true, one real end-to-end `/api/ask` test was run.
+- **Response options** (`ResultOptions` in api.py, shared by ask/run-sql/fix):
+  - `chart` (default true).
+  - `rows` (default true; false gives `rows: null`, and the table comes from `GET /table` on click).
+  - `answer` (default false; true adds `answer` + `answer_source` via `whole_answer()`, about 1-2 s more, and falls back to the template).
+  - `sql_visible` (**default false, the user's choice**): SQL is null in responses and in error details unless true.
+    This changed earlier behaviour: SQL used to be always returned.
+  - The user's chat body is `{"question", "chart": true, "rows": false, "answer": true}`.
 
 ## 3. Open questions / waiting for approval
 1. **Option A (city aliases):** when a question names a two-name city, the API adds a hint such as

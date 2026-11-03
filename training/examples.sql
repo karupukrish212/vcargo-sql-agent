@@ -191,3 +191,23 @@ WHERE t.cancel = 0
 -- Added from the app on 2026-11-02
 SELECT DISTINCT c.customerid, c.customercode, c.customername, c.email, c.phonenumber, c.pocname, c.pocemail, c.pocnumber, c.salesperson, a.city, a.state FROM trip t JOIN customer c ON c.customerid = t.customer LEFT JOIN customeraddress a ON a.customerid = c.customerid WHERE t.cancel = 0 AND lower(t.source) LIKE '%dindigul%' AND (lower(t.destination) LIKE '%bengaluru%' OR lower(t.destination) LIKE '%bangalore%');
 
+-- Q: give the driver and vehicle details for trip from Madurai?
+-- Added from the app on 2026-11-03
+SELECT DISTINCT
+    t.tripid,
+    d.tdriverid,
+    d.name            AS driver_name,
+    d.phone           AS driver_phone,      -- corrected column name
+    d.licenseexpiry,
+    v.tvehicleid,
+    v.vehiclenumber,
+    v.type            AS vehicle_type,
+    v.capacity,
+    v.year
+FROM trip      AS t
+JOIN tdriver   AS d ON d.tdriverid = t.driver
+JOIN tvehicle  AS v ON v.tvehicleid = t.vehicle
+WHERE t.cancel = 0
+  AND d.cancel = 0
+  AND v.cancel = 0
+  AND t.source LIKE '%Madurai%';

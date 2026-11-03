@@ -3,7 +3,10 @@
     python api.py      then open http://127.0.0.1:8000/docs for interactive docs
 
 Flow for the frontend:
-    POST /api/ask                        question -> SQL, rows, chart, result id
+    POST /api/ask                        question -> rows, chart, result id; options: "rows": false,
+                                         "answer": true (written answer), "sql_visible": true (the SQL)
+    POST /api/results/{id}/answer        the result as a short written answer (Markdown, streamed)
+    GET  /api/results/{id}/table         the rows, for a "Show table" button (ask with "rows": false)
     GET  /api/results/{id}/csv           download the result as CSV
     POST /api/results/{id}/feedback      {"correct": true}  -> trained and saved in training/examples.sql
                                          {"correct": false} -> logged for review
@@ -21,6 +24,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
@@ -29,10 +33,11 @@ import pandas as pd
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 import settings
+from answers import answer_prompt, template_answer
 from charts import build_chart
 from safe_sql import UnsafeSQLError, explain
 from train import load_examples, question_key, remove_example, write_example
@@ -211,17 +216,30 @@ def require_api_key(x_api_key: str | None = Header(default=None)):
 
 # ---------- API models ----------
 
-class AskRequest(BaseModel):
-    question: str = Field(min_length=3, max_length=1000, examples=["Which vehicle used the most fuel last month?"])
+class ResultOptions(BaseModel):
+    """What to put in the response; the same for /ask, /run-sql and /fix."""
     chart: bool = True
+    rows: bool = Field(default=True, description="False leaves the rows out (rows = null); "
+                                                 "get them later with GET /api/results/{id}/table")
+    answer: bool = Field(default=False, description="True adds the written answer (Markdown) in one go; "
+                                                    "it takes a few seconds more")
+    sql_visible: bool = Field(default=False, description="True returns the SQL query; false leaves it out "
+                                                         "(sql = null), also in error details")
+
+
+class AskRequest(ResultOptions):
+    question: str = Field(min_length=3, max_length=1000, examples=["Which vehicle used the most fuel last month?"])
 
 
 class AskResponse(BaseModel):
-    id: str = Field(description="Use for CSV download and feedback")
+    id: str = Field(description="Use for the answer, table, CSV download and feedback")
     question: str
-    sql: str
+    answer: str | None = Field(description="Written answer in Markdown; null unless the request had answer = true")
+    answer_source: Literal["llm", "template"] | None = Field(
+        description="llm = written by the model, template = built from the result without it")
+    sql: str | None = Field(description="null unless the request had sql_visible = true")
     columns: list[str]
-    rows: list[dict]
+    rows: list[dict] | None = Field(description="null when the request had rows = false")
     row_count: int
     truncated: bool = Field(description=f"True if the result was cut at MAX_RESULT_ROWS ({settings.MAX_RESULT_ROWS})")
     chart: dict | None = Field(description="Plotly figure {data, layout} for react-plotly.js, or null")
@@ -229,14 +247,20 @@ class AskResponse(BaseModel):
         description="How to show it: number = one value as a big number, chart = chart + table, table = table only")
 
 
-class RunSqlRequest(BaseModel):
+class TableResponse(BaseModel):
+    id: str
+    columns: list[str]
+    rows: list[dict]
+    row_count: int
+    truncated: bool = Field(description=f"True if the result was cut at MAX_RESULT_ROWS ({settings.MAX_RESULT_ROWS})")
+
+
+class RunSqlRequest(ResultOptions):
     sql: str = Field(min_length=6, max_length=20000, description="The corrected SELECT query")
-    chart: bool = True
 
 
-class FixRequest(BaseModel):
+class FixRequest(ResultOptions):
     comment: str = Field(min_length=3, max_length=2000, examples=["Only include diesel, not petrol"])
-    chart: bool = True
 
 
 class FeedbackRequest(BaseModel):
@@ -264,27 +288,34 @@ app.add_middleware(
     allow_origins=settings.CORS_ORIGINS,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type", "X-API-Key"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Answer-Source"],
 )
 
 
-def build_response(question: str, sql: str, df: pd.DataFrame, with_chart: bool) -> AskResponse:
+def _records(df: pd.DataFrame) -> list[dict]:
+    return json.loads(df.to_json(orient="records", date_format="iso", default_handler=str))
+
+
+def build_response(question: str, sql: str, df: pd.DataFrame, options: ResultOptions) -> AskResponse:
     """Cache the result (for CSV, feedback and corrections) and shape it for the frontend."""
     df = to_json_ready(df)
     result_id = cache.put({"question": question, "sql": sql, "df": df})
-    chart = build_chart(df) if with_chart else None
+    chart = build_chart(df) if options.chart else None
     if df.shape == (1, 1):
         display = "number"
     elif chart:
         display = "chart"
     else:
         display = "table"
+    answer, answer_source = whole_answer(question, sql, df) if options.answer else (None, None)
     return AskResponse(
         id=result_id,
         question=question,
-        sql=sql,
+        answer=answer,
+        answer_source=answer_source,
+        sql=sql if options.sql_visible else None,
         columns=[str(c) for c in df.columns],
-        rows=json.loads(df.to_json(orient="records", date_format="iso", default_handler=str)),
+        rows=_records(df) if options.rows else None,
         row_count=len(df),
         truncated=bool(df.attrs.get("truncated", False)),
         chart=chart,
@@ -292,12 +323,38 @@ def build_response(question: str, sql: str, df: pd.DataFrame, with_chart: bool) 
     )
 
 
+def whole_answer(question: str, sql: str, df: pd.DataFrame) -> tuple[str, str]:
+    """The written answer in one piece (for "answer": true), and who wrote it. Like
+    /answer, it falls back to the template, so the question never fails because of it."""
+    if settings.ALLOW_LLM_TO_SEE_DATA:
+        try:
+            text = (vn.submit_prompt(answer_prompt(question, sql, df)) or "").strip()
+            if text:
+                return text, "llm"
+        except Exception as e:
+            log.warning("The model could not write the answer, using the template: %s", e)
+    return template_answer(df), "template"
+
+
+@contextmanager
+def sql_in_errors(visible: bool):
+    """Leave the SQL out of error details too, unless the request has sql_visible = true."""
+    try:
+        yield
+    except HTTPException as e:
+        if not visible and isinstance(e.detail, dict) and e.detail.get("sql"):
+            e.detail = {**e.detail, "sql": None}
+        raise
+
+
 @app.post("/api/ask", response_model=AskResponse, tags=["ask"])
 def ask(req: AskRequest):
-    """Turn a question into SQL, run it read-only, and return rows plus a chart."""
+    """Turn a question into SQL, run it read-only, and return rows plus a chart
+    (and the written answer and the SQL, if asked for)."""
     question = req.question.strip()
-    sql, df = generate_and_run(question)
-    return build_response(question, sql, df, req.chart)
+    with sql_in_errors(req.sql_visible):
+        sql, df = generate_and_run(question)
+    return build_response(question, sql, df, req)
 
 
 @app.post("/api/results/{result_id}/run-sql", response_model=AskResponse, tags=["correct a wrong answer"])
@@ -308,13 +365,14 @@ def run_corrected_sql(result_id: str, req: RunSqlRequest):
     that new id to train the original question with this corrected SQL."""
     item = cache.get(result_id)
     sql = req.sql.strip().rstrip(";")
-    try:
-        df = vn.run_sql(sql)
-    except UnsafeSQLError as e:
-        raise HTTPException(400, detail={"message": str(e), "sql": sql})
-    except Exception as e:
-        raise HTTPException(422, detail={"message": f"The query failed: {e}", "sql": sql})
-    return build_response(item["question"], sql, df, req.chart)
+    with sql_in_errors(req.sql_visible):
+        try:
+            df = vn.run_sql(sql)
+        except UnsafeSQLError as e:
+            raise HTTPException(400, detail={"message": str(e), "sql": sql})
+        except Exception as e:
+            raise HTTPException(422, detail={"message": f"The query failed: {e}", "sql": sql})
+    return build_response(item["question"], sql, df, req)
 
 
 @app.post("/api/results/{result_id}/fix", response_model=AskResponse, tags=["correct a wrong answer"])
@@ -329,8 +387,59 @@ def fix_with_ai(result_id: str, req: FixRequest):
         f"What the user says is wrong: {req.comment}\n\n"
         "Rewrite the SQL so it answers the question correctly."
     )
-    sql, df = generate_and_run(prompt)
-    return build_response(item["question"], sql, df, req.chart)
+    with sql_in_errors(req.sql_visible):
+        sql, df = generate_and_run(prompt)
+    return build_response(item["question"], sql, df, req)
+
+
+@app.post("/api/results/{result_id}/answer", tags=["ask"],
+          responses={200: {"content": {"text/markdown": {}},
+                           "description": "Markdown text, sent in pieces as it is written"}})
+def written_answer(result_id: str):
+    """The result as a short written answer in Markdown, like a chat assistant, streamed as it is written.
+
+    With ALLOW_LLM_TO_SEE_DATA=true the model writes it from the first ANSWER_MAX_ROWS rows.
+    Otherwise, or if the model fails, it is built here from the result and nothing is sent.
+    The X-Answer-Source header says which: "llm" or "template"."""
+    item = cache.get(result_id)
+    df = item["df"]
+    if settings.ALLOW_LLM_TO_SEE_DATA:
+        try:
+            pieces = vn.stream_prompt(answer_prompt(item["question"], item["sql"], df))
+            return _markdown_response(_model_answer(pieces, df), "llm")
+        except Exception as e:
+            log.warning("The model could not write the answer, using the template: %s", e)
+    return _markdown_response(iter([template_answer(df)]), "template")
+
+
+def _model_answer(pieces, df: pd.DataFrame):
+    """Pass the model's text through; if it stops early or writes nothing, say so or use the template."""
+    written = False
+    try:
+        for text in pieces:
+            if text:
+                written = True
+                yield text
+    except Exception:
+        log.exception("The model stopped while writing the answer")
+        if written:
+            yield "\n\n_(The answer was cut off. See the table for the full result.)_"
+    if not written:
+        yield template_answer(df)
+
+
+def _markdown_response(pieces, source: str) -> StreamingResponse:
+    return StreamingResponse(pieces, media_type="text/markdown; charset=utf-8",
+                             headers={"X-Answer-Source": source, "Cache-Control": "no-cache"})
+
+
+@app.get("/api/results/{result_id}/table", response_model=TableResponse, tags=["ask"])
+def result_table(result_id: str):
+    """The rows of a result, for a "Show table" button: ask with "rows": false, then call this
+    only when the user wants the table (like the CSV download)."""
+    df = cache.get(result_id)["df"]
+    return TableResponse(id=result_id, columns=[str(c) for c in df.columns], rows=_records(df),
+                         row_count=len(df), truncated=bool(df.attrs.get("truncated", False)))
 
 
 @app.get("/api/results/{result_id}/csv", tags=["ask"],
